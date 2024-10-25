@@ -13,7 +13,7 @@ from transformers import BertTokenizerFast
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.model.layoutlmv3 import LayoutLMv3ForPreTraining
-from src.data.prepare_data import normalize_bbox
+from src.data.pretrain_preprocessing import normalize_bbox
 from src.data.dataset import PretrainingDataset
 
 # Set up logging
@@ -59,6 +59,14 @@ def preprocess_input(image_path, text, bbox, config):
     # Replace the pixel_values with our actual image
     processed_item['pixel_values'] = dataset.image_transform(image).unsqueeze(0)
 
+    # Ensure all tensors have a batch dimension
+    for key in processed_item:
+        if isinstance(processed_item[key], torch.Tensor):
+            if processed_item[key].dim() == 1:
+                processed_item[key] = processed_item[key].unsqueeze(0)
+            elif processed_item[key].dim() == 2 and key == 'bbox':
+                processed_item[key] = processed_item[key].unsqueeze(0)
+
     return processed_item
 
 def test_model_inference(config_path, image_path, text, bbox):
@@ -70,7 +78,7 @@ def test_model_inference(config_path, image_path, text, bbox):
         model = LayoutLMv3ForPreTraining(config['model'])
         model_path = config['pretraining']['model_path']
         if os.path.exists(model_path):
-            model.load_state_dict(torch.load(model_path, map_location='cpu'))
+            model.load_state_dict(torch.load(model_path, map_location='cpu', weights_only=True))
             logger.info(f"Loaded pretrained model from {model_path}")
         else:
             logger.warning(f"Pretrained model not found at {model_path}. Using initialized model.")
@@ -80,13 +88,27 @@ def test_model_inference(config_path, image_path, text, bbox):
         # Preprocess the input
         inputs = preprocess_input(image_path, text, bbox, config)
 
+        # Log input shapes
+        for key, value in inputs.items():
+            if isinstance(value, torch.Tensor):
+                logger.info(f"Input '{key}' shape: {value.shape}")
+
         # Perform inference
         with torch.no_grad():
             outputs = model(**inputs)
 
         # Log some output information
-        logger.info(f"Model output shape: {outputs.logits.shape}")
-        logger.info(f"Model loss: {outputs.loss.item()}")
+        if hasattr(outputs, 'prediction_scores'):
+            logger.info(f"Model prediction_scores shape: {outputs.prediction_scores.shape}")
+        elif hasattr(outputs, 'logits'):
+            logger.info(f"Model logits shape: {outputs.logits.shape}")
+        else:
+            logger.warning("Model output doesn't have 'prediction_scores' or 'logits' attribute")
+
+        if hasattr(outputs, 'loss'):
+            logger.info(f"Model loss: {outputs.loss.item()}")
+        else:
+            logger.warning("Model output doesn't have 'loss' attribute")
 
         return True
     except Exception as e:
