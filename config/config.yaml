@@ -44,6 +44,7 @@ finetuning:
   train_dir: "/home/michaeld/workdir/LayoutLMv3/data/dataset/training_data"
   eval_dir: "/home/michaeld/workdir/LayoutLMv3/data/dataset/testing_data"
   num_labels: 9  # Adjust based on your NER task
+  skip_processing: true  # Add this line
 
 inference:
   model_path: "models/layoutlmv3_finetuned.pth"

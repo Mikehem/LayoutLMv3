@@ -8,7 +8,7 @@ import yaml
 import click
 import logging
 from src.trainer import train_model
-from src.finetune import finetune_model
+from src.finetuning import finetune_model
 from src.inference import run_inference
 
 # Set up logging

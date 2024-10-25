@@ -161,46 +161,36 @@ class LayoutLMv3(nn.Module):
     def __init__(self, config):
         super(LayoutLMv3, self).__init__()
         self.config = config
-        self.num_labels = config.get('num_labels', 2)  # Default to 2 if not specified
-        self.text_encoder = TextEncoder(config)
-        self.vision_encoder = VisionEncoder(
+        # Create a BertConfig object from the config dictionary
+        bert_config = BertConfig(**config)
+        self.bert = BertModel(bert_config)
+        self.visual_encoder = VisionEncoder(
             img_size=224,
             patch_size=16,
             in_channels=3,
             embed_dim=config['hidden_size'],
-            depth=config['num_hidden_layers'],
-            num_heads=config['num_attention_heads'],
+            depth=6,
+            num_heads=12,
             mlp_ratio=4.0,
             dropout=config['hidden_dropout_prob'],
             attn_dropout=config['attention_probs_dropout_prob']
         )
-        self.spatial_embeddings = SpatialEmbeddings(hidden_size=config['hidden_size'])
-        self.multimodal_encoder = BertModel(BertConfig(**config))
-        self.classifier = nn.Linear(config['hidden_size'], self.num_labels)
+        self.fusion_layer = nn.Linear(config['hidden_size'] * 2, config['hidden_size'])
 
-    def forward(self, input_ids, attention_mask, bbox, images, labels=None):
-        # Handle 3D input tensors
-        if input_ids.dim() == 3:
-            batch_size, seq_len, num_tokens = input_ids.size()
-            input_ids = input_ids.view(batch_size * seq_len, num_tokens)
-            attention_mask = attention_mask.view(batch_size * seq_len, num_tokens)
-            bbox = bbox.view(batch_size * seq_len, *bbox.size()[2:])
-        
-        # Ensure images is 4D (batch_size, channels, height, width)
-        if images.dim() == 3:
-            images = images.unsqueeze(0)
+    def forward(self, input_ids, attention_mask, bbox, pixel_values):
+        # Process text input
+        text_outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+        text_features = text_outputs.last_hidden_state
 
-        textual_features = self.text_encoder(input_ids, attention_mask)
-        visual_features = self.vision_encoder(images)
-        spatial_features = self.spatial_embeddings(bbox)
-        
-        # Combine features
-        combined_features = textual_features + spatial_features + visual_features.unsqueeze(1)
-        outputs = self.multimodal_encoder(inputs_embeds=combined_features, attention_mask=attention_mask)
-        
-        sequence_output = outputs.last_hidden_state
-        
-        return (sequence_output,)  # Return a tuple with sequence_output
+        # Process visual input
+        visual_features = self.visual_encoder(pixel_values)
+        visual_features = visual_features.unsqueeze(1).expand(-1, text_features.size(1), -1)
+
+        # Fuse text and visual features
+        fused_features = torch.cat([text_features, visual_features], dim=-1)
+        fused_features = self.fusion_layer(fused_features)
+
+        return (fused_features,)
 
 class LayoutLMv3ForPreTraining(nn.Module):
     def __init__(self, config):
@@ -217,7 +207,7 @@ class LayoutLMv3ForPreTraining(nn.Module):
             input_ids=input_ids,
             attention_mask=attention_mask,
             bbox=bbox,
-            images=pixel_values
+            pixel_values=pixel_values
         )
 
         sequence_output = outputs[0]  # Get the sequence output
@@ -258,10 +248,10 @@ class LayoutLMv3ForTokenClassification(nn.Module):
             input_ids=input_ids,
             attention_mask=attention_mask,
             bbox=bbox,
-            images=pixel_values
+            pixel_values=pixel_values
         )
 
-        sequence_output = outputs.last_hidden_state
+        sequence_output = outputs[0]
         sequence_output = self.dropout(sequence_output)
         logits = self.classifier(sequence_output)
 
@@ -270,9 +260,4 @@ class LayoutLMv3ForTokenClassification(nn.Module):
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
-        return TokenClassifierOutput(
-            loss=loss,
-            logits=logits,
-            hidden_states=outputs.hidden_states,
-            attentions=outputs.attentions,
-        )
+        return {'loss': loss, 'logits': logits}

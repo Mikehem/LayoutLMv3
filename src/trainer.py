@@ -123,5 +123,10 @@ class Trainer:
         logger.info(f"Final model saved: {final_model_path}")
 
 def train_model(config):
-    trainer = Trainer(config)
-    trainer.train()
+    try:
+        trainer = Trainer(config)
+        trainer.train()
+    except Exception as e:
+        logger.error(f"An error occurred during training: {str(e)}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)

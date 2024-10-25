@@ -7,6 +7,7 @@ from PIL import Image
 import numpy as np
 from transformers import BertTokenizerFast
 import logging
+import traceback
 
 # Update the import paths
 from src.model.layoutlmv3 import LayoutLMv3ForTokenClassification
@@ -58,27 +59,30 @@ def perform_inference(model, input_ids, attention_mask, bbox, pixel_values):
     return outputs
 
 def run_inference(config):
-    model = load_model(config)
-    dataset = FUNSDDataset(config['inference']['data_dir'], config['model']['max_seq_length'])
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model.to(device)
+    try:
+        model = load_model(config)
+        dataset = FUNSDDataset(config['inference']['data_dir'], config['model']['max_seq_length'])
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model.to(device)
 
-    for i in range(len(dataset)):
-        sample = dataset[i]
-        input_ids = sample['input_ids'].unsqueeze(0).to(device)
-        attention_mask = sample['attention_mask'].unsqueeze(0).to(device)
-        bbox = sample['bbox'].unsqueeze(0).to(device)
-        pixel_values = sample['pixel_values'].unsqueeze(0).to(device)
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            input_ids = sample['input_ids'].unsqueeze(0).to(device)
+            attention_mask = sample['attention_mask'].unsqueeze(0).to(device)
+            bbox = sample['bbox'].unsqueeze(0).to(device)
+            pixel_values = sample['pixel_values'].unsqueeze(0).to(device)
 
-        with torch.no_grad():
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, bbox=bbox, pixel_values=pixel_values)
+            with torch.no_grad():
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, bbox=bbox, pixel_values=pixel_values)
 
-        # Process outputs as needed
-        # For example, you might want to print the predicted labels
-        predicted_labels = outputs.logits.argmax(-1)
-        logger.info(f"Predicted labels for sample {i}: {predicted_labels}")
+            predicted_labels = outputs.logits.argmax(-1)
+            logger.info(f"Predicted labels for sample {i}: {predicted_labels}")
 
-    logger.info("Inference completed.")
+        logger.info("Inference completed.")
+    except Exception as e:
+        logger.error(f"An error occurred during inference: {str(e)}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)
 
 def main(config_path):
     config = load_config(config_path)
@@ -96,7 +100,12 @@ def main(config_path):
     # Add any post-processing or analysis of the outputs here
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="LayoutLMv3 Inference")
-    parser.add_argument("--config", type=str, required=True, help="Path to the config file")
-    args = parser.parse_args()
-    main(args.config)
+    try:
+        parser = argparse.ArgumentParser(description="LayoutLMv3 Inference")
+        parser.add_argument("--config", type=str, required=True, help="Path to the config file")
+        args = parser.parse_args()
+        main(args.config)
+    except Exception as e:
+        logger.error(f"An error occurred: {str(e)}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)
